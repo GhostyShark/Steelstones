@@ -3,80 +3,72 @@
 public class CarController : MonoBehaviour
 {
     [Header("References")]
-    public Transform cube;
-    public Transform forwardReference;
+    public Transform carBody;   // De zichtbare auto-body (los van de fysica-bol)
+    public Rigidbody rb;        // Rigidbody van de bol (dit object)
 
     [Header("Movement Settings")]
-    public float maxSpeed = 4f;
-    public float acceleration = 2f;
-    public float deceleration = 1.5f;
+    public float moveForce = 15f;
+    public float maxSpeed = 5f;
 
-    [Header("Rotation Settings")]
-    public float rotationSpeed = 120f;
+    [Header("Steering Settings")]
+    public float turnSpeed = 120f; // graden per seconde
 
-    private float currentSpeed = 0f;
+    [Header("Body Follow Settings")]
+    public Vector3 offset = Vector3.zero; // Eventuele verschuiving t.o.v. het midden van de bol
 
-    void Update()
+    void Awake()
     {
-        HandleRotation();
+        // Dit script hoort op de bol te staan; pak de eigen Rigidbody als er niks is ingevuld.
+        if (rb == null)
+            rb = GetComponent<Rigidbody>();
     }
 
     void FixedUpdate()
     {
+        HandleSteering();
         HandleMovement();
+    }
+
+    void HandleSteering()
+    {
+        // A = links, D = rechts — draait de carBody zelf, niet de bol.
+        float turn = 0f;
+
+        if (Input.GetKey(KeyCode.A)) turn -= 1f;
+        if (Input.GetKey(KeyCode.D)) turn += 1f;
+
+        carBody.Rotate(0f, turn * turnSpeed * Time.fixedDeltaTime, 0f, Space.World);
     }
 
     void HandleMovement()
     {
-        Vector3 forward = forwardReference.forward;
+        // W = vooruit, S = achteruit — relatief aan de richting waar de carBody heen kijkt.
+        float input = 0f;
+
+        if (Input.GetKey(KeyCode.W)) input += 1f;
+        if (Input.GetKey(KeyCode.S)) input -= 1f;
+
+        Vector3 forward = carBody.forward;
         forward.y = 0f;
         forward.Normalize();
 
-        float input = 0f;
+        rb.AddForce(forward * input * moveForce, ForceMode.Acceleration);
 
-        // W = vooruit
-        if (Input.GetKey(KeyCode.W))
-            input += 1f;
+        // Maximumsnelheid (horizontaal)
+        Vector3 flatVelocity = rb.linearVelocity;
+        flatVelocity.y = 0f;
 
-        // S = achteruit
-        if (Input.GetKey(KeyCode.S))
-            input -= 1f;
-
-        float targetSpeed = input * maxSpeed;
-
-        float rate = Mathf.Abs(targetSpeed) > Mathf.Abs(currentSpeed)
-            ? acceleration
-            : deceleration;
-
-        currentSpeed = Mathf.MoveTowards(
-            currentSpeed,
-            targetSpeed,
-            rate * Time.fixedDeltaTime
-        );
-
-        cube.position += forward * currentSpeed * Time.fixedDeltaTime;
+        if (flatVelocity.magnitude > maxSpeed)
+        {
+            flatVelocity = flatVelocity.normalized * maxSpeed;
+            rb.linearVelocity = new Vector3(flatVelocity.x, rb.linearVelocity.y, flatVelocity.z);
+        }
     }
 
-    void HandleRotation()
+    void LateUpdate()
     {
-        // Niet draaien als je stilstaat
-        if (Mathf.Abs(currentSpeed) < 0.05f)
-            return;
-
-        float rotation = 0f;
-
-        // A = links
-        if (Input.GetKey(KeyCode.A))
-            rotation -= 1f;
-
-        // D = rechts
-        if (Input.GetKey(KeyCode.D))
-            rotation += 1f;
-
-        cube.Rotate(
-            0f,
-            rotation * rotationSpeed * Time.deltaTime,
-            0f
-        );
+        // De body volgt de positie van de bol, los van de rotatie van de bol zelf.
+        if (carBody != null)
+            carBody.position = rb.position + offset;
     }
 }
