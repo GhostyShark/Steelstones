@@ -3,72 +3,142 @@
 public class CarController : MonoBehaviour
 {
     [Header("References")]
-    public Transform carBody;   // De zichtbare auto-body (los van de fysica-bol)
-    public Rigidbody rb;        // Rigidbody van de bol (dit object)
+    public Transform cube;
+    public Transform forwardReference;
+    public Rigidbody rb;
 
     [Header("Movement Settings")]
-    public float moveForce = 15f;
-    public float maxSpeed = 5f;
+    public float maxSpeed = 4f;
+    public float acceleration = 2f;
+    public float deceleration = 1.5f;
 
-    [Header("Steering Settings")]
-    public float turnSpeed = 120f; // graden per seconde
+    [Header("Rotation Settings")]
+    public float rotationSpeed = 120f;
 
-    [Header("Body Follow Settings")]
-    public Vector3 offset = Vector3.zero; // Eventuele verschuiving t.o.v. het midden van de bol
+    [Header("Drift / Handbrake Settings")]
+    [Tooltip("Hoe sterk zijwaartse snelheid gecorrigeerd wordt (grip) tijdens normaal rijden.")]
+    public float normalGrip = 10f;
+    [Tooltip("Grip tijdens het handremmen — lager = meer slippen/driften.")]
+    public float driftGrip = 1.5f;
+    [Tooltip("Extra draaisnelheid tijdens het driften, voor een dynamischer effect.")]
+    public float driftRotationMultiplier = 1.5f;
+    [Tooltip("Extra afremming terwijl de handrem ingedrukt is.")]
+    public float handbrakeDeceleration = 4f;
 
-    void Awake()
+    private float currentSpeed = 0f;
+    private bool isHandbraking = false;
+
+    void Start()
     {
-        // Dit script hoort op de bol te staan; pak de eigen Rigidbody als er niks is ingevuld.
+        // Als Rigidbody niet handmatig is ingevuld,
+        // pak de Rigidbody van de cube.
         if (rb == null)
-            rb = GetComponent<Rigidbody>();
+            rb = cube.GetComponent<Rigidbody>();
     }
 
     void FixedUpdate()
     {
-        HandleSteering();
+        // Handrem status ophalen. GetKey (i.t.t. GetKeyDown) is veilig
+        // om in FixedUpdate te lezen, dus we missen geen input.
+        isHandbraking = Input.GetKey(KeyCode.Space);
+
         HandleMovement();
-    }
-
-    void HandleSteering()
-    {
-        // A = links, D = rechts — draait de carBody zelf, niet de bol.
-        float turn = 0f;
-
-        if (Input.GetKey(KeyCode.A)) turn -= 1f;
-        if (Input.GetKey(KeyCode.D)) turn += 1f;
-
-        carBody.Rotate(0f, turn * turnSpeed * Time.fixedDeltaTime, 0f, Space.World);
+        HandleRotation();
     }
 
     void HandleMovement()
     {
-        // W = vooruit, S = achteruit — relatief aan de richting waar de carBody heen kijkt.
-        float input = 0f;
-
-        if (Input.GetKey(KeyCode.W)) input += 1f;
-        if (Input.GetKey(KeyCode.S)) input -= 1f;
-
-        Vector3 forward = carBody.forward;
+        Vector3 forward = forwardReference.forward;
         forward.y = 0f;
         forward.Normalize();
 
-        rb.AddForce(forward * input * moveForce, ForceMode.Acceleration);
+        Vector3 right = forwardReference.right;
+        right.y = 0f;
+        right.Normalize();
 
-        // Maximumsnelheid (horizontaal)
-        Vector3 flatVelocity = rb.linearVelocity;
-        flatVelocity.y = 0f;
+        float input = 0f;
 
-        if (flatVelocity.magnitude > maxSpeed)
+        // W = vooruit
+        if (Input.GetKey(KeyCode.W))
+            input += 1f;
+
+        // S = achteruit
+        if (Input.GetKey(KeyCode.S))
+            input -= 1f;
+
+        float targetSpeed = input * maxSpeed;
+
+        // Tijdens de handrem remt de auto harder af dan normaal (echte handremwerking)
+        float rate = Mathf.Abs(targetSpeed) > Mathf.Abs(currentSpeed)
+            ? acceleration
+            : (isHandbraking ? handbrakeDeceleration : deceleration);
+
+        currentSpeed = Mathf.MoveTowards(
+            currentSpeed,
+            targetSpeed,
+            rate * Time.fixedDeltaTime
+        );
+
+        // Motorkracht: duwt de auto naar voren/achteren via AddForce
+        Vector3 engineForce = forward * currentSpeed;
+        rb.AddForce(engineForce, ForceMode.Acceleration);
+
+        // Grip: corrigeert de zijwaartse snelheid, zodat de auto normaal
+        // niet zomaar zijwaarts wegglijdt. Tijdens de handrem wordt deze
+        // grip veel lager, waardoor de auto kan slippen/driften.
+        Vector3 horizontalVelocity = rb.linearVelocity;
+        horizontalVelocity.y = 0f;
+
+        float lateralSpeed = Vector3.Dot(horizontalVelocity, right);
+        Vector3 lateralVelocity = right * lateralSpeed;
+
+        float grip = isHandbraking ? driftGrip : normalGrip;
+        rb.AddForce(-lateralVelocity * grip, ForceMode.Acceleration);
+
+        // Voorkom dat de auto sneller gaat dan maxSpeed
+        horizontalVelocity = rb.linearVelocity;
+        horizontalVelocity.y = 0f;
+
+        if (horizontalVelocity.magnitude > maxSpeed)
         {
-            flatVelocity = flatVelocity.normalized * maxSpeed;
-            rb.linearVelocity = new Vector3(flatVelocity.x, rb.linearVelocity.y, flatVelocity.z);
+            horizontalVelocity = horizontalVelocity.normalized * maxSpeed;
+
+            rb.linearVelocity = new Vector3(
+                horizontalVelocity.x,
+                rb.linearVelocity.y,
+                horizontalVelocity.z
+            );
         }
     }
 
-    void LateUpdate()
+    void HandleRotation()
     {
-        // De body volgt de positie van de bol, los van de rotatie van de bol zelf.
-        if (carBody != null)
-            carBody.position = rb.position + offset;
+        // Niet draaien als je stilstaat, tenzij je de handrem gebruikt
+        // (zo kun je ook vanuit stilstand een drift starten).
+        if (Mathf.Abs(currentSpeed) < 0.05f && !isHandbraking)
+            return;
+
+        float rotation = 0f;
+
+        // A = links
+        if (Input.GetKey(KeyCode.A))
+            rotation -= 1f;
+
+        // D = rechts
+        if (Input.GetKey(KeyCode.D))
+            rotation += 1f;
+
+        // Tijdens het driften draait de auto iets sneller
+        float appliedRotationSpeed = isHandbraking
+            ? rotationSpeed * driftRotationMultiplier
+            : rotationSpeed;
+
+        Quaternion deltaRotation = Quaternion.Euler(
+            0f,
+            rotation * appliedRotationSpeed * Time.fixedDeltaTime,
+            0f
+        );
+
+        rb.MoveRotation(rb.rotation * deltaRotation);
     }
 }
