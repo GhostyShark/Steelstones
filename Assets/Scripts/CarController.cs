@@ -3,79 +3,120 @@
 public class CarController : MonoBehaviour
 {
     [Header("References")]
-    public Transform carBody;        // De zichtbare auto-body (los van de fysica-bol)
-    public Rigidbody rb;             // Rigidbody van de bol (dit object)
-    public Transform cameraTransform; // Als leeg: Camera.main wordt gebruikt
+    public Transform cube;
+    public Transform forwardReference;
 
     [Header("Movement Settings")]
-    public float moveForce = 15f;
-    public float maxSpeed = 5f;
+    public float maxSpeed = 4f;
+    public float acceleration = 2f;
+    public float deceleration = 1.5f;
 
     [Header("Steering Settings")]
-    public float turnSpeed = 120f; // graden per seconde
+    public float maxRotationSpeed = 120f;
 
-    [Header("Body Follow Settings")]
-    public Vector3 offset = Vector3.zero; // Eventuele verschuiving t.o.v. het midden van de bol
+    // How quickly the steering reaches full strength
+    public float steeringAcceleration = 2.5f;
 
-    void Awake()
+    // How quickly the steering returns to center
+    public float steeringReturnSpeed = 4f;
+
+    // Minimum percentage of steering available at very low speed
+    [Range(0f, 1f)]
+    public float minimumSteeringStrength = 0.1f;
+
+    private float currentSpeed = 0f;
+    private float currentSteering = 0f;
+
+    void Update()
     {
-        // Dit script hoort op de bol te staan; pak de eigen Rigidbody als er niks is ingevuld.
-        if (rb == null)
-            rb = GetComponent<Rigidbody>();
-
-        if (cameraTransform == null && Camera.main != null)
-            cameraTransform = Camera.main.transform;
+        HandleSteering();
     }
 
     void FixedUpdate()
     {
-        HandleSteering();
         HandleMovement();
-    }
-
-    void HandleSteering()
-    {
-        // A = links, D = rechts — draait de carBody zelf, niet de bol.
-        float turn = 0f;
-
-        if (Input.GetKey(KeyCode.A)) turn -= 1f;
-        if (Input.GetKey(KeyCode.D)) turn += 1f;
-
-        carBody.Rotate(0f, turn * turnSpeed * Time.fixedDeltaTime, 0f, Space.World);
     }
 
     void HandleMovement()
     {
-        // W = vooruit, S = achteruit.
-        // "Vooruit" is nu de richting weg van de camera, gebaseerd op posities —
-        // niet de eigen rotatie van de carBody. Dit voorkomt problemen met een
-        // scheef geïmporteerd model.
-        float input = 0f;
-
-        if (Input.GetKey(KeyCode.W)) input += 1f;
-        if (Input.GetKey(KeyCode.S)) input -= 1f;
-
-        Vector3 forward = carBody.position - cameraTransform.position;
+        Vector3 forward = forwardReference.forward;
         forward.y = 0f;
         forward.Normalize();
 
-        rb.AddForce(forward * input * moveForce, ForceMode.Acceleration);
+        float input = 0f;
 
-        // Maximumsnelheid (horizontaal)
-        Vector3 flatVelocity = rb.linearVelocity;
-        flatVelocity.y = 0f;
+        // W = Forward
+        if (Input.GetKey(KeyCode.W))
+            input += 1f;
 
-        if (flatVelocity.magnitude > maxSpeed)
-        {
-            flatVelocity = flatVelocity.normalized * maxSpeed;
-            rb.linearVelocity = new Vector3(flatVelocity.x, rb.linearVelocity.y, flatVelocity.z);
-        }
+        // S = Reverse
+        if (Input.GetKey(KeyCode.S))
+            input -= 1f;
+
+        float targetSpeed = input * maxSpeed;
+
+        float rate = Mathf.Abs(targetSpeed) > Mathf.Abs(currentSpeed)
+            ? acceleration
+            : deceleration;
+
+        currentSpeed = Mathf.MoveTowards(
+            currentSpeed,
+            targetSpeed,
+            rate * Time.fixedDeltaTime
+        );
+
+        cube.position += forward * currentSpeed * Time.fixedDeltaTime;
     }
 
-    void LateUpdate()
+    void HandleSteering()
     {
-        // De body volgt de positie van de bol, los van de rotatie van de bol zelf.
-        if (carBody != null)
-            carBody.position = rb.position + offset;
+        float steeringInput = 0f;
+
+        // A = Left
+        if (Input.GetKey(KeyCode.A))
+            steeringInput -= 1f;
+
+        // D = Right
+        if (Input.GetKey(KeyCode.D))
+            steeringInput += 1f;
+
+        // Smoothly build up steering instead of instantly turning
+        float steeringRate = steeringInput != 0f
+            ? steeringAcceleration
+            : steeringReturnSpeed;
+
+        currentSteering = Mathf.MoveTowards(
+            currentSteering,
+            steeringInput,
+            steeringRate * Time.deltaTime
+        );
+
+        // Calculate how fast the car is moving compared to max speed
+        float speedPercentage = Mathf.Clamp01(
+            Mathf.Abs(currentSpeed) / maxSpeed
+        );
+
+        // Very little steering at low speed, more steering at higher speed
+        float steeringStrength = Mathf.Lerp(
+            minimumSteeringStrength,
+            1f,
+            speedPercentage
+        );
+
+        // Prevent steering while practically stationary
+        if (Mathf.Abs(currentSpeed) < 0.05f)
+            return;
+
+        float rotationAmount =
+            currentSteering *
+            maxRotationSpeed *
+            steeringStrength *
+            Time.deltaTime;
+
+        // Reverse steering direction when driving backwards
+        if (currentSpeed < 0f)
+            rotationAmount *= -1f;
+
+        cube.Rotate(0f, rotationAmount, 0f);
     }
 }
