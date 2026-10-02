@@ -13,43 +13,54 @@ public class CarController : MonoBehaviour
 
     [Header("Steering Settings")]
     public float maxRotationSpeed = 120f;
-
-    // How quickly the steering reaches full strength
     public float steeringAcceleration = 2.5f;
-
-    // How quickly the steering returns to center
     public float steeringReturnSpeed = 4f;
 
-    // Minimum percentage of steering available at very low speed
     [Range(0f, 1f)]
     public float minimumSteeringStrength = 0.1f;
 
     private float currentSpeed = 0f;
     private float currentSteering = 0f;
 
-    void Update()
+    private Rigidbody carRigidbody;
+
+    void Start()
     {
-        HandleSteering();
+        // Get Rigidbody from the cube/car
+        carRigidbody = cube.GetComponent<Rigidbody>();
+
+        if (carRigidbody == null)
+        {
+            Debug.LogError("Er zit geen Rigidbody op de Cube!");
+            return;
+        }
+
+        // Better collision detection
+        carRigidbody.collisionDetectionMode = CollisionDetectionMode.Continuous;
+        carRigidbody.interpolation = RigidbodyInterpolation.Interpolate;
+
+        // Prevent the car from falling/tipping over
+        carRigidbody.constraints =
+            RigidbodyConstraints.FreezeRotationX |
+            RigidbodyConstraints.FreezeRotationZ;
     }
 
     void FixedUpdate()
     {
         HandleMovement();
+        HandleSteering();
     }
 
     void HandleMovement()
     {
-        Vector3 forward = forwardReference.forward;
-        forward.y = 0f;
-        forward.Normalize();
+        if (carRigidbody == null)
+            return;
 
         float input = 0f;
 
-        // W = Forward
         if (Input.GetKey(KeyCode.W))
             input += 1f;
 
-        // S = Reverse
         if (Input.GetKey(KeyCode.S))
             input -= 1f;
 
@@ -65,22 +76,30 @@ public class CarController : MonoBehaviour
             rate * Time.fixedDeltaTime
         );
 
-        cube.position += forward * currentSpeed * Time.fixedDeltaTime;
+        Vector3 forward = forwardReference.forward;
+        forward.y = 0f;
+        forward.Normalize();
+
+        Vector3 newPosition =
+            carRigidbody.position +
+            forward * currentSpeed * Time.fixedDeltaTime;
+
+        carRigidbody.MovePosition(newPosition);
     }
 
     void HandleSteering()
     {
+        if (carRigidbody == null)
+            return;
+
         float steeringInput = 0f;
 
-        // A = Left
         if (Input.GetKey(KeyCode.A))
             steeringInput -= 1f;
 
-        // D = Right
         if (Input.GetKey(KeyCode.D))
             steeringInput += 1f;
 
-        // Smoothly build up steering instead of instantly turning
         float steeringRate = steeringInput != 0f
             ? steeringAcceleration
             : steeringReturnSpeed;
@@ -88,22 +107,19 @@ public class CarController : MonoBehaviour
         currentSteering = Mathf.MoveTowards(
             currentSteering,
             steeringInput,
-            steeringRate * Time.deltaTime
+            steeringRate * Time.fixedDeltaTime
         );
 
-        // Calculate how fast the car is moving compared to max speed
         float speedPercentage = Mathf.Clamp01(
             Mathf.Abs(currentSpeed) / maxSpeed
         );
 
-        // Very little steering at low speed, more steering at higher speed
         float steeringStrength = Mathf.Lerp(
             minimumSteeringStrength,
             1f,
             speedPercentage
         );
 
-        // Prevent steering while practically stationary
         if (Mathf.Abs(currentSpeed) < 0.05f)
             return;
 
@@ -111,12 +127,22 @@ public class CarController : MonoBehaviour
             currentSteering *
             maxRotationSpeed *
             steeringStrength *
-            Time.deltaTime;
+            Time.fixedDeltaTime;
 
-        // Reverse steering direction when driving backwards
         if (currentSpeed < 0f)
             rotationAmount *= -1f;
 
-        cube.Rotate(0f, rotationAmount, 0f);
+        Quaternion rotation =
+            Quaternion.Euler(0f, rotationAmount, 0f);
+
+        carRigidbody.MoveRotation(
+            carRigidbody.rotation * rotation
+        );
+    }
+
+    void OnCollisionEnter(Collision collision)
+    {
+        // Lose some speed when crashing
+        currentSpeed *= 0.25f;
     }
 }
