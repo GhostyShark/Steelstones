@@ -21,6 +21,8 @@ public class CarController : MonoBehaviour
 
     [Header("Boost Settings")]
     public float boostSpeed = 10f;
+    public float boostDuration = 2f;
+    public float boostCooldown = 3f;
 
     [Header("Drift Settings")]
     public float driftTurnMultiplier = 1.7f;
@@ -31,13 +33,16 @@ public class CarController : MonoBehaviour
     private float currentSteering = 0f;
 
     private bool isBoosting = false;
+    private float boostTimer = 0f;
+    private float boostCooldownTimer = 0f;
+
     private bool isDrifting = false;
 
     private Rigidbody carRigidbody;
 
     void Start()
     {
-        // Rigidbody ophalen
+        // Rigidbody ophalen van de Cube
         carRigidbody = cube.GetComponent<Rigidbody>();
 
         if (carRigidbody == null)
@@ -46,7 +51,7 @@ public class CarController : MonoBehaviour
             return;
         }
 
-        // Betere collision detection
+        // Betere physics
         carRigidbody.collisionDetectionMode =
             CollisionDetectionMode.Continuous;
 
@@ -61,7 +66,7 @@ public class CarController : MonoBehaviour
 
     void Update()
     {
-        HandleBoostInput();
+        HandleBoost();
         HandleDriftInput();
     }
 
@@ -89,35 +94,42 @@ public class CarController : MonoBehaviour
         if (Input.GetKey(KeyCode.S))
             input = -1f;
 
-        // Bepaal topsnelheid
-        float targetMaxSpeed = isBoosting
-            ? boostSpeed
-            : maxSpeed;
+        // ==============================================
+        // BOOST
+        // ==============================================
 
-        float targetSpeed = input * targetMaxSpeed;
-
-        // Acceleratie / vertraging
-        float rate;
-
-        if (Mathf.Abs(targetSpeed) > Mathf.Abs(currentSpeed))
-            rate = acceleration;
+        if (isBoosting)
+        {
+            // Tijdens boost blijft de snelheid hoog
+            if (currentSpeed >= 0f)
+                currentSpeed = boostSpeed;
+            else
+                currentSpeed = -boostSpeed;
+        }
         else
-            rate = deceleration;
+        {
+            // Normale snelheid
+            float targetSpeed = input * maxSpeed;
 
-        // Tijdens boost sneller accelereren
-        if (isBoosting && input != 0f)
-            rate = acceleration * 4f;
+            float rate;
 
-        currentSpeed = Mathf.MoveTowards(
-            currentSpeed,
-            targetSpeed,
-            rate * Time.fixedDeltaTime
-        );
+            if (Mathf.Abs(targetSpeed) > Mathf.Abs(currentSpeed))
+                rate = acceleration;
+            else
+                rate = deceleration;
 
-        // Voorwaartse richting
+            currentSpeed = Mathf.MoveTowards(
+                currentSpeed,
+                targetSpeed,
+                rate * Time.fixedDeltaTime
+            );
+        }
+
+        // Forward richting
         Vector3 forward = forwardReference.forward;
 
         forward.y = 0f;
+
         forward.Normalize();
 
         // Auto bewegen
@@ -148,6 +160,7 @@ public class CarController : MonoBehaviour
         if (Input.GetKey(KeyCode.D))
             steeringInput = 1f;
 
+        // Steering smooth maken
         float steeringRate;
 
         if (steeringInput != 0f)
@@ -161,10 +174,11 @@ public class CarController : MonoBehaviour
             steeringRate * Time.fixedDeltaTime
         );
 
-        // Niet sturen wanneer je stilstaat
+        // Niet draaien wanneer auto stilstaat
         if (Mathf.Abs(currentSpeed) < 0.05f)
             return;
 
+        // Hoe sneller je rijdt, hoe sterker steering wordt
         float speedPercentage =
             Mathf.Clamp01(
                 Mathf.Abs(currentSpeed) / maxSpeed
@@ -179,9 +193,11 @@ public class CarController : MonoBehaviour
 
         float rotationSpeed = maxRotationSpeed;
 
-        // Tijdens drift scherper sturen
+        // Extra steering tijdens drift
         if (isDrifting)
+        {
             rotationSpeed *= driftTurnMultiplier;
+        }
 
         float rotationAmount =
             currentSteering *
@@ -189,9 +205,11 @@ public class CarController : MonoBehaviour
             steeringStrength *
             Time.fixedDeltaTime;
 
-        // Achteruit = steering omdraaien
+        // Steering omdraaien wanneer je achteruit rijdt
         if (currentSpeed < 0f)
+        {
             rotationAmount *= -1f;
+        }
 
         Quaternion rotation =
             Quaternion.Euler(
@@ -209,12 +227,50 @@ public class CarController : MonoBehaviour
     // BOOST
     // ==================================================
 
-    void HandleBoostInput()
+    void HandleBoost()
     {
-        // SHIFT INHOUDEN = BOOST
-        isBoosting =
-            Input.GetKey(KeyCode.LeftShift) ||
-            Input.GetKey(KeyCode.RightShift);
+        // Cooldown aftellen
+        if (boostCooldownTimer > 0f)
+        {
+            boostCooldownTimer -= Time.deltaTime;
+        }
+
+        // SHIFT = BOOST
+        if (Input.GetKeyDown(KeyCode.LeftShift))
+        {
+            if (!isBoosting &&
+                boostCooldownTimer <= 0f &&
+                Mathf.Abs(currentSpeed) > 0.1f)
+            {
+                isBoosting = true;
+
+                boostTimer = boostDuration;
+
+                // DIRECT naar boost speed
+                if (currentSpeed > 0f)
+                    currentSpeed = boostSpeed;
+                else
+                    currentSpeed = -boostSpeed;
+
+                Debug.Log("BOOST START!");
+            }
+        }
+
+        // Boost timer
+        if (isBoosting)
+        {
+            boostTimer -= Time.deltaTime;
+
+            if (boostTimer <= 0f)
+            {
+                isBoosting = false;
+
+                boostCooldownTimer =
+                    boostCooldown;
+
+                Debug.Log("BOOST END!");
+            }
+        }
     }
 
     // ==================================================
@@ -223,7 +279,7 @@ public class CarController : MonoBehaviour
 
     void HandleDriftInput()
     {
-        // CTRL INHOUDEN = DRIFT
+        // CTRL ingedrukt houden
         isDrifting =
             Input.GetKey(KeyCode.LeftControl) ||
             Input.GetKey(KeyCode.RightControl);
@@ -238,23 +294,21 @@ public class CarController : MonoBehaviour
         if (!isDrifting)
             return;
 
-        if (carRigidbody == null)
-            return;
-
-        // Niet driften als je bijna stilstaat
+        // Niet driften wanneer je bijna stilstaat
         if (Mathf.Abs(currentSpeed) < 0.5f)
             return;
 
-        // Je moet A of D gebruiken
+        // A/D nodig om daadwerkelijk te driften
         if (Mathf.Abs(currentSteering) < 0.1f)
             return;
 
         Vector3 right = forwardReference.right;
 
         right.y = 0f;
+
         right.Normalize();
 
-        // Zijwaarts glijden
+        // Zijwaartse drift
         Vector3 driftMovement =
             right *
             currentSteering *
@@ -266,12 +320,17 @@ public class CarController : MonoBehaviour
             driftMovement
         );
 
-        // Beetje snelheid verliezen tijdens drift
-        currentSpeed = Mathf.MoveTowards(
-            currentSpeed,
-            0f,
-            driftSpeedLoss * Time.fixedDeltaTime
-        );
+        // Langzaam snelheid verliezen tijdens drift
+        if (!isBoosting)
+        {
+            currentSpeed =
+                Mathf.MoveTowards(
+                    currentSpeed,
+                    0f,
+                    driftSpeedLoss *
+                    Time.fixedDeltaTime
+                );
+        }
     }
 
     // ==================================================
@@ -280,7 +339,14 @@ public class CarController : MonoBehaviour
 
     void OnCollisionEnter(Collision collision)
     {
-        // Snelheid verliezen wanneer je ergens tegenaan rijdt
+        // Flink snelheid verliezen bij crash
         currentSpeed *= 0.25f;
+
+        // Boost stoppen bij harde crash
+        if (isBoosting)
+        {
+            isBoosting = false;
+            boostCooldownTimer = boostCooldown;
+        }
     }
 }
